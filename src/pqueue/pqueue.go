@@ -1,4 +1,4 @@
-package main
+package pqueue
 
 import (
 	"container/heap"
@@ -7,21 +7,21 @@ import (
 )
 
 type Bid struct {
-	id        string
-	bidderId  string
-	artworkId string
-	quantity  int32
-	price     int32
-	status    int32
-	placedAt  time.Time
+	Id        string
+	BidderId  string
+	ArtworkId string
+	Quantity  int32
+	Price     int32
+	Status    int32
+	PlacedAt  time.Time
 
-	quantityFilled int32
+	QuantityFilled int32
 
 	index int // for heap interface
 }
 
 func (bid *Bid) QuantityRemaining() int32 {
-	return bid.quantity - bid.quantityFilled
+	return bid.Quantity - bid.QuantityFilled
 }
 
 type BidPriorityQueue []*Bid
@@ -29,12 +29,12 @@ type BidPriorityQueue []*Bid
 func (bpq BidPriorityQueue) Len() int { return len(bpq) }
 
 func (bpq BidPriorityQueue) Less(i, j int) bool {
-	if bpq[i].price > bpq[j].price {
+	if bpq[i].Price > bpq[j].Price {
 		return true
-	} else if bpq[i].price < bpq[j].price {
+	} else if bpq[i].Price < bpq[j].Price {
 		return false
 	} else { // if prices are equal, prioritize earlier order
-		return bpq[i].placedAt.Before(bpq[j].placedAt)
+		return bpq[i].PlacedAt.Before(bpq[j].PlacedAt)
 	}
 }
 
@@ -61,22 +61,29 @@ func (bpq *BidPriorityQueue) Pop() interface{} {
 	return item
 }
 
-type Ask struct {
-	id        string
-	askerId   string
-	artworkId string
-	quantity  int32
-	price     int32
-	status    int32
-	placedAt  time.Time
+func (bpq BidPriorityQueue) Peek() *Bid {
+	if bpq.Len() == 0 {
+		return &Bid{}
+	}
+	return bpq[0]
+}
 
-	quantityFilled int32
+type Ask struct {
+	Id        string
+	AskerId   string
+	ArtworkId string
+	Quantity  int32
+	Price     int32
+	Status    int32
+	PlacedAt  time.Time
+
+	QuantityFilled int32
 
 	index int
 }
 
 func (ask *Ask) QuantityRemaining() int32 {
-	return ask.quantity - ask.quantityFilled
+	return ask.Quantity - ask.QuantityFilled
 }
 
 type AskPriorityQueue []*Ask
@@ -84,12 +91,12 @@ type AskPriorityQueue []*Ask
 func (apq AskPriorityQueue) Len() int { return len(apq) }
 
 func (apq AskPriorityQueue) Less(i, j int) bool {
-	if apq[i].price < apq[j].price {
+	if apq[i].Price < apq[j].Price {
 		return true
-	} else if apq[i].price > apq[j].price {
+	} else if apq[i].Price > apq[j].Price {
 		return false
 	} else { // if prices are equal, prioritize earlier order
-		return apq[i].placedAt.Before(apq[j].placedAt)
+		return apq[i].PlacedAt.Before(apq[j].PlacedAt)
 	}
 }
 
@@ -123,7 +130,7 @@ func (apq AskPriorityQueue) Peek() *Ask {
 	return apq[0]
 }
 
-func testAsk() {
+func TestAsk() {
 	time0, _ := time.Parse(time.RFC822, "01 Jan 14 10:00 UTC")
 	time1, _ := time.Parse(time.RFC822, "01 Jan 14 10:01 UTC")
 	time2, _ := time.Parse(time.RFC822, "01 Jan 14 10:02 UTC")
@@ -132,34 +139,34 @@ func testAsk() {
 	time5, _ := time.Parse(time.RFC822, "01 Jan 15 10:00 UTC")
 	asks := map[string]*Ask{
 		"0": {
-			quantity: 20,
-			price:    10,
-			placedAt: time0,
+			Quantity: 20,
+			Price:    10,
+			PlacedAt: time0,
 		},
 		"1": {
-			quantity: 30,
-			price:    11,
-			placedAt: time1,
+			Quantity: 30,
+			Price:    11,
+			PlacedAt: time1,
 		},
 		"2": {
-			quantity: 30,
-			price:    8,
-			placedAt: time2,
+			Quantity: 30,
+			Price:    8,
+			PlacedAt: time2,
 		},
 		"3": {
-			quantity: 30,
-			price:    7,
-			placedAt: time3,
+			Quantity: 30,
+			Price:    7,
+			PlacedAt: time3,
 		},
 		"4": {
-			quantity: 30,
-			price:    12,
-			placedAt: time4,
+			Quantity: 30,
+			Price:    12,
+			PlacedAt: time4,
 		},
 		"5": {
-			quantity: 30,
-			price:    10,
-			placedAt: time5,
+			Quantity: 30,
+			Price:    10,
+			PlacedAt: time5,
 		},
 	}
 
@@ -173,20 +180,20 @@ func testAsk() {
 
 	time6, _ := time.Parse(time.RFC822, "01 Jan 15 11:00 UTC")
 	heap.Push(&apq, &Ask{
-		quantity: 30,
-		price:    9,
-		placedAt: time6,
+		Quantity: 30,
+		Price:    9,
+		PlacedAt: time6,
 	})
 
 	for apq.Len() > 0 {
 		ask := heap.Pop(&apq).(*Ask)
 		// fmt.Printf("next min: %+v\n", apq[0])
-		fmt.Printf("price: %v qty: %v time: %v\n", ask.price, ask.quantity, ask.placedAt)
+		fmt.Printf("price: %v qty: %v time: %v\n", ask.Price, ask.Quantity, ask.PlacedAt)
 	}
 
 }
 
-func testBid() {
+func TestBid() {
 	time0, _ := time.Parse(time.RFC822, "01 Jan 14 10:00 UTC")
 	time1, _ := time.Parse(time.RFC822, "01 Jan 14 10:01 UTC")
 	time2, _ := time.Parse(time.RFC822, "01 Jan 14 10:02 UTC")
@@ -195,34 +202,34 @@ func testBid() {
 	time5, _ := time.Parse(time.RFC822, "01 Jan 15 10:00 UTC")
 	bids := map[string]*Bid{
 		"0": {
-			quantity: 20,
-			price:    10,
-			placedAt: time0,
+			Quantity: 20,
+			Price:    10,
+			PlacedAt: time0,
 		},
 		"1": {
-			quantity: 30,
-			price:    11,
-			placedAt: time1,
+			Quantity: 30,
+			Price:    11,
+			PlacedAt: time1,
 		},
 		"2": {
-			quantity: 30,
-			price:    8,
-			placedAt: time2,
+			Quantity: 30,
+			Price:    8,
+			PlacedAt: time2,
 		},
 		"3": {
-			quantity: 30,
-			price:    7,
-			placedAt: time3,
+			Quantity: 30,
+			Price:    7,
+			PlacedAt: time3,
 		},
 		"4": {
-			quantity: 30,
-			price:    12,
-			placedAt: time4,
+			Quantity: 30,
+			Price:    12,
+			PlacedAt: time4,
 		},
 		"5": {
-			quantity: 30,
-			price:    10,
-			placedAt: time5,
+			Quantity: 30,
+			Price:    10,
+			PlacedAt: time5,
 		},
 	}
 
@@ -236,13 +243,13 @@ func testBid() {
 
 	time6, _ := time.Parse(time.RFC822, "01 Jan 15 11:00 UTC")
 	heap.Push(&bpq, &Bid{
-		quantity: 30,
-		price:    9,
-		placedAt: time6,
+		Quantity: 30,
+		Price:    9,
+		PlacedAt: time6,
 	})
 
 	for bpq.Len() > 0 {
 		bid := heap.Pop(&bpq).(*Bid)
-		fmt.Printf("price: %v qty: %v time: %v\n", bid.price, bid.quantity, bid.placedAt)
+		fmt.Printf("price: %v qty: %v time: %v\n", bid.Price, bid.Quantity, bid.PlacedAt)
 	}
 }
