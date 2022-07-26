@@ -4,7 +4,6 @@ import (
 	"container/heap"
 	crand "crypto/rand"
 	"encoding/base64"
-	"fmt"
 	"math"
 	"sync"
 
@@ -18,9 +17,10 @@ const (
 	ORDER_REJECTED
 )
 
-type Server struct {
-	bids   map[string]*BidPriorityQueueMutex // key: artworkId
-	asks   map[string]*AskPriorityQueueMutex // key: artworkId
+type OrderMatchingEngine struct {
+	bids   map[uint32]*BidPriorityQueueMutex // key: artworkId
+	asks   map[uint32]*AskPriorityQueueMutex // key: artworkId
+	mu     map[uint32]*sync.Mutex
 	orders chan FillOrder
 }
 
@@ -35,67 +35,92 @@ type AskPriorityQueueMutex struct {
 }
 
 type FillOrder struct {
-	bidId          string
-	askId          string
-	artworkId      string
-	price          int32
-	quantityFilled int32
-	status         int32
+	BidId          uint32
+	AskId          uint32
+	ArtworkId      uint32
+	Price          uint32
+	QuantityFilled uint32
+	Status         uint32
 }
 
-/*
-
-BID 10 200 150 (50)
-
-ASK 10 50 50 (0) x
-ASK 10 100 100 (0) x
-
-*/
-
-func (server *Server) addAsk(ask *pqueue.Ask) {
-
-	if server.asks[ask.ArtworkId] == nil {
-		askPQ := make(pqueue.AskPriorityQueue, 0)
-		heap.Init(&askPQ)
-		server.asks[ask.ArtworkId] = &AskPriorityQueueMutex{pqueue: &askPQ, mu: &sync.Mutex{}}
+func New() *OrderMatchingEngine {
+	return &OrderMatchingEngine{
+		bids:   make(map[uint32]*BidPriorityQueueMutex),
+		asks:   make(map[uint32]*AskPriorityQueueMutex),
+		mu:     make(map[uint32]*sync.Mutex),
+		orders: make(chan FillOrder, 0),
 	}
-	heap.Push(server.asks[ask.ArtworkId].pqueue, ask)
 }
 
-func (server *Server) addBid(bid *pqueue.Bid) {
-	// check if queue exists
-	if server.bids[bid.ArtworkId] == nil {
+func (ome *OrderMatchingEngine) AddArtworkIfNotExists(artworkId uint32) {
+	if ome.mu[artworkId] == nil {
 		bidPQ := make(pqueue.BidPriorityQueue, 0)
 		heap.Init(&bidPQ)
-		server.bids[bid.ArtworkId] = &BidPriorityQueueMutex{pqueue: &bidPQ, mu: &sync.Mutex{}}
+		askPQ := make(pqueue.AskPriorityQueue, 0)
+		heap.Init(&askPQ)
+
+		ome.bids[artworkId] = &BidPriorityQueueMutex{pqueue: &bidPQ, mu: &sync.Mutex{}}
+		ome.asks[artworkId] = &AskPriorityQueueMutex{pqueue: &askPQ, mu: &sync.Mutex{}}
+		ome.mu[artworkId] = &sync.Mutex{}
 	}
-	heap.Push(server.bids[bid.ArtworkId].pqueue, bid)
 }
 
-func (server *Server) fillAskOrder(ask *pqueue.Ask) {
-	server.bids[ask.ArtworkId].mu.Lock()
-	defer server.bids[ask.ArtworkId].mu.Unlock()
+func (ome *OrderMatchingEngine) Orders() chan FillOrder {
+	return ome.orders
+}
 
-	bid := server.bids[ask.ArtworkId].pqueue.Peek()
-	for server.bids[ask.ArtworkId].pqueue.Len() > 0 && ask.Price <= bid.Price {
+func (ome *OrderMatchingEngine) addAsk(ask *pqueue.Ask) {
+
+	if ome.asks[ask.ArtworkId] == nil {
+		askPQ := make(pqueue.AskPriorityQueue, 0)
+		heap.Init(&askPQ)
+		ome.asks[ask.ArtworkId] = &AskPriorityQueueMutex{pqueue: &askPQ, mu: &sync.Mutex{}}
+	}
+	heap.Push(ome.asks[ask.ArtworkId].pqueue, ask)
+}
+
+func (ome *OrderMatchingEngine) addBid(bid *pqueue.Bid) {
+	// check if queue exists
+	if ome.bids[bid.ArtworkId] == nil {
+		bidPQ := make(pqueue.BidPriorityQueue, 0)
+		heap.Init(&bidPQ)
+		ome.bids[bid.ArtworkId] = &BidPriorityQueueMutex{pqueue: &bidPQ, mu: &sync.Mutex{}}
+	}
+	heap.Push(ome.bids[bid.ArtworkId].pqueue, bid)
+}
+
+func (ome *OrderMatchingEngine) FillAskOrder(ask *pqueue.Ask) []*FillOrder {
+	ome.AddArtworkIfNotExists(ask.ArtworkId)
+
+	orders := make([]*FillOrder, 0)
+
+	ome.mu[ask.ArtworkId].Lock()
+	defer ome.mu[ask.ArtworkId].Unlock()
+
+	bid := ome.bids[ask.ArtworkId].pqueue.Peek()
+	for ome.bids[ask.ArtworkId].pqueue.Len() > 0 && ask.Price <= bid.Price {
 
 		quantityToFill := math.Min(float64(ask.QuantityRemaining()), float64(bid.QuantityRemaining()))
-		ask.QuantityFilled += int32(quantityToFill)
-		bid.QuantityFilled += int32(quantityToFill)
+		ask.QuantityFilled += uint32(quantityToFill)
+		bid.QuantityFilled += uint32(quantityToFill)
 
-		server.orders <- FillOrder{
-			bidId:          bid.Id,
-			askId:          ask.Id,
-			artworkId:      ask.ArtworkId,
-			price:          ask.Price,
-			quantityFilled: int32(quantityToFill),
-			status:         ORDER_PENDING,
+		order := FillOrder{
+			BidId:          bid.Id,
+			AskId:          ask.Id,
+			ArtworkId:      ask.ArtworkId,
+			Price:          bid.Price,
+			QuantityFilled: uint32(quantityToFill),
+			Status:         ORDER_PENDING,
 		}
+
+		ome.orders <- order
+
+		orders = append(orders, &order)
 
 		if bid.QuantityRemaining() == 0 {
-			heap.Pop(server.bids[ask.ArtworkId].pqueue)
+			heap.Pop(ome.bids[ask.ArtworkId].pqueue)
 		}
-		bid = server.bids[ask.ArtworkId].pqueue.Peek()
+		bid = ome.bids[ask.ArtworkId].pqueue.Peek()
 
 		if ask.QuantityRemaining() == 0 {
 			break
@@ -103,38 +128,46 @@ func (server *Server) fillAskOrder(ask *pqueue.Ask) {
 	}
 
 	if ask.QuantityRemaining() > 0 {
-		server.asks[ask.ArtworkId].mu.Lock()
-		defer server.asks[ask.ArtworkId].mu.Unlock()
-		server.addAsk(ask)
+		ome.addAsk(ask)
 	}
+
+	return orders
 }
 
-func (server *Server) fillBidOrder(bid *pqueue.Bid) {
-	server.asks[bid.ArtworkId].mu.Lock()
-	defer server.asks[bid.ArtworkId].mu.Unlock()
+func (ome *OrderMatchingEngine) FillBidOrder(bid *pqueue.Bid) []*FillOrder {
+	ome.AddArtworkIfNotExists(bid.ArtworkId)
+
+	orders := make([]*FillOrder, 0)
+
+	ome.mu[bid.ArtworkId].Lock()
+	defer ome.mu[bid.ArtworkId].Unlock()
 
 	// TODO: What if the ask queue is empty?
-	ask := server.asks[bid.ArtworkId].pqueue.Peek()
-	for server.asks[bid.ArtworkId].pqueue.Len() > 0 && ask.Price <= bid.Price {
+	ask := ome.asks[bid.ArtworkId].pqueue.Peek()
+	for ome.asks[bid.ArtworkId].pqueue.Len() > 0 && ask.Price <= bid.Price {
 
 		quantityToFill := math.Min(float64(ask.QuantityRemaining()), float64(bid.QuantityRemaining()))
-		ask.QuantityFilled += int32(quantityToFill)
-		bid.QuantityFilled += int32(quantityToFill)
+		ask.QuantityFilled += uint32(quantityToFill)
+		bid.QuantityFilled += uint32(quantityToFill)
 
 		// create order transaction
-		server.orders <- FillOrder{
-			bidId:          bid.Id,
-			askId:          ask.Id,
-			price:          ask.Price,
-			quantityFilled: int32(quantityToFill),
-			status:         ORDER_PENDING,
+		order := FillOrder{
+			BidId:          bid.Id,
+			AskId:          ask.Id,
+			ArtworkId:      bid.ArtworkId,
+			Price:          ask.Price,
+			QuantityFilled: uint32(quantityToFill),
+			Status:         ORDER_PENDING,
 		}
+
+		ome.orders <- order
+		orders = append(orders, &order)
 
 		// remove ask from queue if ask is complete
 		if ask.QuantityRemaining() == 0 {
-			heap.Pop(server.asks[bid.ArtworkId].pqueue)
+			heap.Pop(ome.asks[bid.ArtworkId].pqueue)
 		}
-		ask = server.asks[bid.ArtworkId].pqueue.Peek()
+		ask = ome.asks[bid.ArtworkId].pqueue.Peek()
 
 		// finish up if the bid is complete
 		if bid.QuantityRemaining() == 0 {
@@ -144,17 +177,12 @@ func (server *Server) fillBidOrder(bid *pqueue.Bid) {
 
 	// if the bid is not yet completely filled, insert into queue
 	if bid.QuantityRemaining() > 0 {
-		server.bids[bid.ArtworkId].mu.Lock()
-		defer server.bids[bid.ArtworkId].mu.Unlock()
-		server.addBid(bid)
+		ome.bids[bid.ArtworkId].mu.Lock()
+		defer ome.bids[bid.ArtworkId].mu.Unlock()
+		ome.addBid(bid)
 	}
-}
 
-func (server *Server) worker() {
-	for {
-		order := <-server.orders
-		fmt.Printf("price: %v quantity: %v\n", order.price, order.quantityFilled)
-	}
+	return orders
 }
 
 func randString(n int) string {
@@ -163,46 +191,3 @@ func randString(n int) string {
 	s := base64.URLEncoding.EncodeToString(b)
 	return s[0:n]
 }
-
-// func New() *Server {
-// 	return &Server{
-// 		bidPool: newBidPool(),
-// 		askPool: newAskPool(),
-// 	}
-// }
-
-// func (server *Server) processBid(bid *Bid) {
-
-// 	// insert into bid pool
-// 	if _, ok := server.bidPool.queues[bid.artworkId]; ok {
-// 		server.bidPool.queues[bid.artworkId] = append(server.bidPool.queues[bid.artworkId], bid)
-// 	} else {
-// 		server.bidPool.queues[bid.artworkId] = []*Bid{bid}
-// 		server.bidPool.numArtworks++
-// 	}
-// 	server.bidPool.numBids++
-
-// 	// TODO: check if bid matches any existing
-
-// }
-
-// func (server *Server) insertBid(bid *Bid) {
-
-// }
-
-// //
-// func (server *Server) matchAndFillBids(bid *Bid) {
-
-// 	// if asks, ok := server.askPool.queues[bid.artworkId]; ok {
-
-// 	// }
-
-// }
-
-// func (server *Server) findBidMatches() {
-
-// }
-
-// func main() {
-// 	test()
-// }

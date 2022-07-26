@@ -7,20 +7,23 @@ import (
 )
 
 type Bid struct {
-	Id        string
-	BidderId  string
-	ArtworkId string
-	Quantity  int32
-	Price     int32
-	Status    int32
+	Id        uint32
+	BidderId  uint32
+	ArtworkId uint32
+	Quantity  uint32
+	Price     uint32
+	Status    uint32
 	PlacedAt  time.Time
 
-	QuantityFilled int32
+	QuantityFilled uint32
 
 	index int // for heap interface
 }
 
-func (bid *Bid) QuantityRemaining() int32 {
+func (bid *Bid) QuantityRemaining() uint32 {
+	if bid.QuantityFilled > bid.Quantity {
+		return 0
+	}
 	return bid.Quantity - bid.QuantityFilled
 }
 
@@ -69,20 +72,23 @@ func (bpq BidPriorityQueue) Peek() *Bid {
 }
 
 type Ask struct {
-	Id        string
-	AskerId   string
-	ArtworkId string
-	Quantity  int32
-	Price     int32
-	Status    int32
+	Id        uint32
+	AskerId   uint32
+	ArtworkId uint32
+	Quantity  uint32
+	Price     uint32
+	Status    uint32
 	PlacedAt  time.Time
 
-	QuantityFilled int32
+	QuantityFilled uint32
 
 	index int
 }
 
-func (ask *Ask) QuantityRemaining() int32 {
+func (ask *Ask) QuantityRemaining() uint32 {
+	if ask.QuantityFilled > ask.Quantity {
+		return 0
+	}
 	return ask.Quantity - ask.QuantityFilled
 }
 
