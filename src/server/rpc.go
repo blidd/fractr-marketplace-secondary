@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fractr-marketplace-secondary/pqueue"
-	"time"
 
 	mcproto "github.com/blidd/fractr-proto/marketplace_common"
 	msproto "github.com/blidd/fractr-proto/marketplace_secondary"
@@ -14,35 +13,29 @@ func (server *Server) PlaceBid(
 	req *msproto.PlaceBidRequest,
 ) (*msproto.PlaceBidResponse, error) {
 
-	bid := &pqueue.Bid{
-		Id:             req.Bid.Id,
-		BidderId:       req.Bid.BidderId,
-		ArtworkId:      req.Bid.ArtworkId,
-		Quantity:       req.Bid.Quantity,
-		Price:          req.Bid.Price,
-		PlacedAt:       time.Now(),
-		QuantityFilled: 0,
-	}
+	bid := pqueue.NewBid(
+		req.Bid.Id,
+		req.Bid.BidderId,
+		req.Bid.ArtworkId,
+		req.Bid.Quantity,
+		req.Bid.Price,
+	)
 
-	pendingOrders := server.match.FillBidOrder(bid)
-
-	ordersResp := make([]*mcproto.Order, 0)
-	var quantityFilled uint32 = 0
-	for _, order := range pendingOrders {
-		ordersResp = append(ordersResp, &mcproto.Order{
-			BidId:          order.BidId,
-			AskId:          order.AskId,
-			ArtworkId:      order.ArtworkId,
-			Price:          order.Price,
-			QuantityFilled: order.QuantityFilled,
-			Status:         order.Status,
-		})
-		quantityFilled += order.QuantityFilled
+	bidPlaced := server.match.FillBidOrder(bid)
+	bidProto := &mcproto.Bid{
+		Id:        bidPlaced.Id,
+		ArtworkId: bidPlaced.ArtworkId,
+		BidderId:  bidPlaced.BidderId,
+		Quantity:  bidPlaced.Quantity(),
+		Price:     bidPlaced.Price,
 	}
 
 	return &msproto.PlaceBidResponse{
-		Orders:         ordersResp,
-		QuantityFilled: quantityFilled,
+		BidStatus: &mcproto.BidStatus{
+			Bid:            bidProto,
+			QuantityFilled: bidPlaced.QuantityFilled(),
+			Status:         bidPlaced.Status(),
+		},
 	}, nil
 }
 
@@ -51,35 +44,28 @@ func (server *Server) PlaceAsk(
 	req *msproto.PlaceAskRequest,
 ) (*msproto.PlaceAskResponse, error) {
 
-	ask := &pqueue.Ask{
-		Id:             req.Ask.Id,
-		AskerId:        req.Ask.AskerId,
-		ArtworkId:      req.Ask.ArtworkId,
-		Quantity:       req.Ask.Quantity,
-		Price:          req.Ask.Price,
-		PlacedAt:       time.Now(),
-		QuantityFilled: 0,
-	}
+	ask := pqueue.NewAsk(
+		req.Ask.Id,
+		req.Ask.AskerId,
+		req.Ask.ArtworkId,
+		req.Ask.Quantity,
+		req.Ask.Price,
+	)
 
-	pendingOrders := server.match.FillAskOrder(ask)
-
-	ordersResp := make([]*mcproto.Order, 0)
-	var quantityFilled uint32 = 0
-	for _, order := range pendingOrders {
-		ordersResp = append(ordersResp, &mcproto.Order{
-			BidId:          order.BidId,
-			AskId:          order.AskId,
-			ArtworkId:      order.ArtworkId,
-			Price:          order.Price,
-			QuantityFilled: order.QuantityFilled,
-			Status:         order.Status,
-		})
-		quantityFilled += order.QuantityFilled
+	askPlaced := server.match.FillAskOrder(ask)
+	askProto := &mcproto.Ask{
+		Id:        askPlaced.Id,
+		ArtworkId: askPlaced.ArtworkId,
+		AskerId:   askPlaced.AskerId,
+		Quantity:  askPlaced.Quantity(),
+		Price:     askPlaced.Price,
 	}
 
 	return &msproto.PlaceAskResponse{
-		Orders:         ordersResp,
-		QuantityFilled: quantityFilled,
+		AskStatus: &mcproto.AskStatus{
+			Ask:            askProto,
+			QuantityFilled: askPlaced.QuantityFilled(),
+			Status:         askPlaced.Status(),
+		},
 	}, nil
-
 }

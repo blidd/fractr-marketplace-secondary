@@ -4,27 +4,58 @@ import (
 	"container/heap"
 	"fmt"
 	"time"
+
+	mcpb "github.com/blidd/fractr-proto/marketplace_common"
 )
 
 type Bid struct {
 	Id        uint32
 	BidderId  uint32
 	ArtworkId uint32
-	Quantity  uint32
+	quantity  uint32
 	Price     uint32
-	Status    uint32
 	PlacedAt  time.Time
 
-	QuantityFilled uint32
+	quantityFilled uint32
 
 	index int // for heap interface
 }
 
+func NewBid(id, bidderId, artworkId, quantity, price uint32) *Bid {
+	return &Bid{
+		Id:             id,
+		BidderId:       bidderId,
+		ArtworkId:      artworkId,
+		quantity:       quantity,
+		Price:          price,
+		PlacedAt:       time.Now(),
+		quantityFilled: 0,
+	}
+}
+
+func (bid *Bid) Quantity() uint32       { return bid.quantity }
+func (bid *Bid) QuantityFilled() uint32 { return bid.quantityFilled }
+
 func (bid *Bid) QuantityRemaining() uint32 {
-	if bid.QuantityFilled > bid.Quantity {
+	if bid.QuantityFilled() > bid.Quantity() {
 		return 0
 	}
-	return bid.Quantity - bid.QuantityFilled
+	return bid.Quantity() - bid.QuantityFilled()
+}
+
+func (bid *Bid) FillQuantity(qty uint32) {
+	bid.quantityFilled += qty
+}
+
+func (bid *Bid) Status() mcpb.Status {
+
+	if bid.QuantityFilled() == bid.Quantity() {
+		return mcpb.Status_COMPLETE
+	} else if bid.QuantityFilled() > 0 {
+		return mcpb.Status_PARTIALLY_FILLED
+	} else {
+		return mcpb.Status_NEW
+	}
 }
 
 type BidPriorityQueue []*Bid
@@ -75,21 +106,50 @@ type Ask struct {
 	Id        uint32
 	AskerId   uint32
 	ArtworkId uint32
-	Quantity  uint32
+	quantity  uint32
 	Price     uint32
-	Status    uint32
 	PlacedAt  time.Time
 
-	QuantityFilled uint32
+	quantityFilled uint32
 
 	index int
 }
 
+func NewAsk(id, askerId, artworkId, quantity, price uint32) *Ask {
+	return &Ask{
+		Id:             id,
+		AskerId:        askerId,
+		ArtworkId:      artworkId,
+		quantity:       quantity,
+		Price:          price,
+		PlacedAt:       time.Now(),
+		quantityFilled: 0,
+	}
+}
+
+func (ask *Ask) Quantity() uint32       { return ask.quantity }
+func (ask *Ask) QuantityFilled() uint32 { return ask.quantityFilled }
+
 func (ask *Ask) QuantityRemaining() uint32 {
-	if ask.QuantityFilled > ask.Quantity {
+	if ask.QuantityFilled() > ask.Quantity() {
 		return 0
 	}
-	return ask.Quantity - ask.QuantityFilled
+	return ask.Quantity() - ask.QuantityFilled()
+}
+
+func (ask *Ask) FillQuantity(qty uint32) {
+	ask.quantityFilled += qty
+}
+
+func (ask *Ask) Status() mcpb.Status {
+
+	if ask.QuantityFilled() == ask.Quantity() {
+		return mcpb.Status_COMPLETE
+	} else if ask.QuantityFilled() > 0 {
+		return mcpb.Status_PARTIALLY_FILLED
+	} else {
+		return mcpb.Status_NEW
+	}
 }
 
 type AskPriorityQueue []*Ask
@@ -145,32 +205,32 @@ func TestAsk() {
 	time5, _ := time.Parse(time.RFC822, "01 Jan 15 10:00 UTC")
 	asks := map[string]*Ask{
 		"0": {
-			Quantity: 20,
+			quantity: 20,
 			Price:    10,
 			PlacedAt: time0,
 		},
 		"1": {
-			Quantity: 30,
+			quantity: 30,
 			Price:    11,
 			PlacedAt: time1,
 		},
 		"2": {
-			Quantity: 30,
+			quantity: 30,
 			Price:    8,
 			PlacedAt: time2,
 		},
 		"3": {
-			Quantity: 30,
+			quantity: 30,
 			Price:    7,
 			PlacedAt: time3,
 		},
 		"4": {
-			Quantity: 30,
+			quantity: 30,
 			Price:    12,
 			PlacedAt: time4,
 		},
 		"5": {
-			Quantity: 30,
+			quantity: 30,
 			Price:    10,
 			PlacedAt: time5,
 		},
@@ -186,7 +246,7 @@ func TestAsk() {
 
 	time6, _ := time.Parse(time.RFC822, "01 Jan 15 11:00 UTC")
 	heap.Push(&apq, &Ask{
-		Quantity: 30,
+		quantity: 30,
 		Price:    9,
 		PlacedAt: time6,
 	})
@@ -194,7 +254,7 @@ func TestAsk() {
 	for apq.Len() > 0 {
 		ask := heap.Pop(&apq).(*Ask)
 		// fmt.Printf("next min: %+v\n", apq[0])
-		fmt.Printf("price: %v qty: %v time: %v\n", ask.Price, ask.Quantity, ask.PlacedAt)
+		fmt.Printf("price: %v qty: %v time: %v\n", ask.Price, ask.Quantity(), ask.PlacedAt)
 	}
 
 }
@@ -208,32 +268,32 @@ func TestBid() {
 	time5, _ := time.Parse(time.RFC822, "01 Jan 15 10:00 UTC")
 	bids := map[string]*Bid{
 		"0": {
-			Quantity: 20,
+			quantity: 20,
 			Price:    10,
 			PlacedAt: time0,
 		},
 		"1": {
-			Quantity: 30,
+			quantity: 30,
 			Price:    11,
 			PlacedAt: time1,
 		},
 		"2": {
-			Quantity: 30,
+			quantity: 30,
 			Price:    8,
 			PlacedAt: time2,
 		},
 		"3": {
-			Quantity: 30,
+			quantity: 30,
 			Price:    7,
 			PlacedAt: time3,
 		},
 		"4": {
-			Quantity: 30,
+			quantity: 30,
 			Price:    12,
 			PlacedAt: time4,
 		},
 		"5": {
-			Quantity: 30,
+			quantity: 30,
 			Price:    10,
 			PlacedAt: time5,
 		},
@@ -249,13 +309,13 @@ func TestBid() {
 
 	time6, _ := time.Parse(time.RFC822, "01 Jan 15 11:00 UTC")
 	heap.Push(&bpq, &Bid{
-		Quantity: 30,
+		quantity: 30,
 		Price:    9,
 		PlacedAt: time6,
 	})
 
 	for bpq.Len() > 0 {
 		bid := heap.Pop(&bpq).(*Bid)
-		fmt.Printf("price: %v qty: %v time: %v\n", bid.Price, bid.Quantity, bid.PlacedAt)
+		fmt.Printf("price: %v qty: %v time: %v\n", bid.Price, bid.Quantity(), bid.PlacedAt)
 	}
 }

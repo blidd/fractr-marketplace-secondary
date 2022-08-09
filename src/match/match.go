@@ -4,6 +4,7 @@ import (
 	"container/heap"
 	crand "crypto/rand"
 	"encoding/base64"
+	"fmt"
 	"math"
 	"sync"
 
@@ -17,11 +18,17 @@ const (
 	ORDER_REJECTED
 )
 
+type BidAsk interface {
+	Quantity() uint32
+	QuantityFilled() uint32
+}
+
 type OrderMatchingEngine struct {
 	bids   map[uint32]*BidPriorityQueueMutex // key: artworkId
 	asks   map[uint32]*AskPriorityQueueMutex // key: artworkId
 	mu     map[uint32]*sync.Mutex
 	orders chan FillOrder
+	jobs   chan BidAsk
 }
 
 type BidPriorityQueueMutex struct {
@@ -48,7 +55,7 @@ func New() *OrderMatchingEngine {
 		bids:   make(map[uint32]*BidPriorityQueueMutex),
 		asks:   make(map[uint32]*AskPriorityQueueMutex),
 		mu:     make(map[uint32]*sync.Mutex),
-		orders: make(chan FillOrder, 0),
+		orders: make(chan FillOrder),
 	}
 }
 
@@ -69,7 +76,11 @@ func (ome *OrderMatchingEngine) Orders() chan FillOrder {
 	return ome.orders
 }
 
-func (ome *OrderMatchingEngine) addAsk(ask *pqueue.Ask) {
+func (ome *OrderMatchingEngine) Jobs() chan BidAsk {
+	return ome.jobs
+}
+
+func (ome *OrderMatchingEngine) AddAsk(ask *pqueue.Ask) {
 
 	if ome.asks[ask.ArtworkId] == nil {
 		askPQ := make(pqueue.AskPriorityQueue, 0)
@@ -79,7 +90,7 @@ func (ome *OrderMatchingEngine) addAsk(ask *pqueue.Ask) {
 	heap.Push(ome.asks[ask.ArtworkId].pqueue, ask)
 }
 
-func (ome *OrderMatchingEngine) addBid(bid *pqueue.Bid) {
+func (ome *OrderMatchingEngine) AddBid(bid *pqueue.Bid) {
 	// check if queue exists
 	if ome.bids[bid.ArtworkId] == nil {
 		bidPQ := make(pqueue.BidPriorityQueue, 0)
@@ -89,10 +100,8 @@ func (ome *OrderMatchingEngine) addBid(bid *pqueue.Bid) {
 	heap.Push(ome.bids[bid.ArtworkId].pqueue, bid)
 }
 
-func (ome *OrderMatchingEngine) FillAskOrder(ask *pqueue.Ask) []*FillOrder {
+func (ome *OrderMatchingEngine) FillAskOrder(ask *pqueue.Ask) *pqueue.Ask {
 	ome.AddArtworkIfNotExists(ask.ArtworkId)
-
-	orders := make([]*FillOrder, 0)
 
 	ome.mu[ask.ArtworkId].Lock()
 	defer ome.mu[ask.ArtworkId].Unlock()
@@ -101,8 +110,11 @@ func (ome *OrderMatchingEngine) FillAskOrder(ask *pqueue.Ask) []*FillOrder {
 	for ome.bids[ask.ArtworkId].pqueue.Len() > 0 && ask.Price <= bid.Price {
 
 		quantityToFill := math.Min(float64(ask.QuantityRemaining()), float64(bid.QuantityRemaining()))
-		ask.QuantityFilled += uint32(quantityToFill)
-		bid.QuantityFilled += uint32(quantityToFill)
+		ask.FillQuantity(uint32(quantityToFill))
+		bid.FillQuantity(uint32(quantityToFill))
+
+		fmt.Println("sending job...")
+		ome.jobs <- bid
 
 		order := FillOrder{
 			BidId:          bid.Id,
@@ -115,8 +127,6 @@ func (ome *OrderMatchingEngine) FillAskOrder(ask *pqueue.Ask) []*FillOrder {
 
 		ome.orders <- order
 
-		orders = append(orders, &order)
-
 		if bid.QuantityRemaining() == 0 {
 			heap.Pop(ome.bids[ask.ArtworkId].pqueue)
 		}
@@ -128,16 +138,16 @@ func (ome *OrderMatchingEngine) FillAskOrder(ask *pqueue.Ask) []*FillOrder {
 	}
 
 	if ask.QuantityRemaining() > 0 {
-		ome.addAsk(ask)
+		ome.AddAsk(ask)
 	}
 
-	return orders
+	ome.jobs <- ask
+
+	return ask
 }
 
-func (ome *OrderMatchingEngine) FillBidOrder(bid *pqueue.Bid) []*FillOrder {
+func (ome *OrderMatchingEngine) FillBidOrder(bid *pqueue.Bid) *pqueue.Bid {
 	ome.AddArtworkIfNotExists(bid.ArtworkId)
-
-	orders := make([]*FillOrder, 0)
 
 	ome.mu[bid.ArtworkId].Lock()
 	defer ome.mu[bid.ArtworkId].Unlock()
@@ -147,8 +157,11 @@ func (ome *OrderMatchingEngine) FillBidOrder(bid *pqueue.Bid) []*FillOrder {
 	for ome.asks[bid.ArtworkId].pqueue.Len() > 0 && ask.Price <= bid.Price {
 
 		quantityToFill := math.Min(float64(ask.QuantityRemaining()), float64(bid.QuantityRemaining()))
-		ask.QuantityFilled += uint32(quantityToFill)
-		bid.QuantityFilled += uint32(quantityToFill)
+		ask.FillQuantity(uint32(quantityToFill))
+		bid.FillQuantity(uint32(quantityToFill))
+		// update storage
+		fmt.Println("sending job...")
+		ome.jobs <- ask
 
 		// create order transaction
 		order := FillOrder{
@@ -161,7 +174,6 @@ func (ome *OrderMatchingEngine) FillBidOrder(bid *pqueue.Bid) []*FillOrder {
 		}
 
 		ome.orders <- order
-		orders = append(orders, &order)
 
 		// remove ask from queue if ask is complete
 		if ask.QuantityRemaining() == 0 {
@@ -179,10 +191,12 @@ func (ome *OrderMatchingEngine) FillBidOrder(bid *pqueue.Bid) []*FillOrder {
 	if bid.QuantityRemaining() > 0 {
 		ome.bids[bid.ArtworkId].mu.Lock()
 		defer ome.bids[bid.ArtworkId].mu.Unlock()
-		ome.addBid(bid)
+		ome.AddBid(bid)
 	}
 
-	return orders
+	ome.jobs <- bid
+
+	return bid
 }
 
 func randString(n int) string {
